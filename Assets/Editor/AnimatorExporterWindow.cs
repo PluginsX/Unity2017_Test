@@ -108,7 +108,13 @@ public class AnimatorExporterWindow : EditorWindow
         
         EditorGUILayout.Space();
         
-        // 4. 导出按钮
+        // 5. 选项设置
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("导出选项", EditorStyles.boldLabel);
+        AnimatorExporterCore.AddPrefix = EditorGUILayout.Toggle("为子状态机节点添加前缀", AnimatorExporterCore.AddPrefix);
+        
+        // 6. 导出按钮
+        EditorGUILayout.Space();
         GUI.enabled = targetAnimator != null;
         if (GUILayout.Button("导出", GUILayout.Height(30)))
         {

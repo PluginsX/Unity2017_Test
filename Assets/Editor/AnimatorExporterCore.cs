@@ -5,10 +5,13 @@ using System;
 using System.Text;
 
 /// <summary>
-/// Animator导出核心逻辑类
-/// </summary>
-public static class AnimatorExporterCore
-{
+    /// Animator导出核心逻辑类
+    /// </summary>
+    public static class AnimatorExporterCore
+    {
+        // 控制是否为子状态机内节点添加前缀
+        public static bool AddPrefix = true;
+    
     /// <summary>
     /// 导出Animator控制器为JSON字符串
     /// </summary>
@@ -65,7 +68,7 @@ public static class AnimatorExporterCore
         // 子状态机中的状态需要添加前缀：子状态机名_状态名
         foreach (var state in stateMachine.states)
         {
-            string stateName = isRootStateMachine ? state.state.name : (stateMachine.name + "_" + state.state.name);
+            string stateName = isRootStateMachine ? state.state.name : (AddPrefix ? (stateMachine.name + "_" + state.state.name) : state.state.name);
             // 普通状态节点没有color字段
             AddNodeIfNotExists(data, stateName, null);
         }
@@ -107,7 +110,7 @@ public static class AnimatorExporterCore
             // Base Layer的根状态机中，Entry直接使用"Entry"
             entryTransition.From = isRootStateMachine ? "Entry" : (stateMachine.name + "_Entry");
             // 默认状态：根状态机直接使用状态名，子状态机需要加前缀
-            entryTransition.To = isRootStateMachine ? stateMachine.defaultState.name : (stateMachine.name + "_" + stateMachine.defaultState.name);
+            entryTransition.To = isRootStateMachine ? stateMachine.defaultState.name : (AddPrefix ? (stateMachine.name + "_" + stateMachine.defaultState.name) : stateMachine.defaultState.name);
             entryTransition.Name = entryTransition.From + "->" + entryTransition.To;
             // Entry到默认状态的过渡通常没有条件
             entryTransition.Conditions = new List<ConditionData>();
@@ -144,7 +147,7 @@ public static class AnimatorExporterCore
                 {
                     // 终止节点是普通状态
                     // Entry的过渡：如果是子状态机的Entry，目标状态需要加前缀
-                    transitionData.To = isRootStateMachine ? transition.destinationState.name : (stateMachine.name + "_" + transition.destinationState.name);
+                    transitionData.To = isRootStateMachine ? transition.destinationState.name : (AddPrefix ? (stateMachine.name + "_" + transition.destinationState.name) : transition.destinationState.name);
                 }
                 
                 // 设置过渡名称：起始节点名->终止节点名
@@ -186,9 +189,34 @@ public static class AnimatorExporterCore
             else if (transition.destinationState != null)
             {
                 // 终止节点是普通状态
-                // 如果是根状态机的AnyState，直接使用状态名
-                // 如果是子状态机的AnyState，需要加前缀：子状态机名_状态名
-                transitionData.To = isRootStateMachine ? transition.destinationState.name : (stateMachine.name + "_" + transition.destinationState.name);
+                // 关键修复：确保目标状态名称始终带有正确的子状态机前缀（只添加直接父状态机的前缀）
+                string toStateName = transition.destinationState.name;
+                
+                // 获取根状态机
+                AnimatorStateMachine rootStateMachine = null;
+                if (controller != null && controller.layers.Length > 0)
+                {
+                    rootStateMachine = controller.layers[0].stateMachine;
+                }
+                
+                // 查找状态所属的直接父状态机
+                AnimatorStateMachine parentStateMachine = FindDirectParentStateMachine(transition.destinationState, rootStateMachine);
+                
+                if (parentStateMachine == rootStateMachine)
+                {
+                    // 目标状态在根状态机中，直接使用状态名
+                    transitionData.To = toStateName;
+                }
+                else if (parentStateMachine != null)
+                {
+                    // 如果目标状态在某个子状态机中且AddPrefix为true，只添加直接父状态机的前缀
+                    transitionData.To = AddPrefix ? (parentStateMachine.name + "_" + toStateName) : toStateName;
+                }
+                else
+                {
+                    // 如果查找失败，使用当前状态机作为默认值
+                    transitionData.To = isRootStateMachine ? toStateName : (AddPrefix ? (stateMachine.name + "_" + toStateName) : toStateName);
+                }
             }
 
             // 设置过渡名称：起始节点名->终止节点名
@@ -212,7 +240,7 @@ public static class AnimatorExporterCore
                 TransitionData transitionData = new TransitionData();
                 // Base Layer的根状态机中的状态直接使用状态名
                 // 子状态机中的状态需要加前缀：子状态机名_状态名
-                transitionData.From = isRootStateMachine ? state.state.name : (stateMachine.name + "_" + state.state.name);
+                transitionData.From = isRootStateMachine ? state.state.name : (AddPrefix ? (stateMachine.name + "_" + state.state.name) : state.state.name);
 
                 // 处理目标节点
                 if (transition.isExit)
@@ -248,7 +276,7 @@ public static class AnimatorExporterCore
                     if (foundInCurrentMachine)
                     {
                         // 目标状态在当前状态机中，需要加前缀（如果是子状态机）
-                        transitionData.To = isRootStateMachine ? toStateName : (stateMachine.name + "_" + toStateName);
+                        transitionData.To = isRootStateMachine ? toStateName : (AddPrefix ? (stateMachine.name + "_" + toStateName) : toStateName);
                     }
                     else
                     {
@@ -446,6 +474,36 @@ public static class AnimatorExporterCore
         {
             ProcessTransitions(childMachine.stateMachine, data, false, controller);
         }
+    }
+    
+    // 递归查找状态所属的直接父状态机
+    // 返回状态所属的直接父状态机，如果是根状态机则返回根状态机，如果未找到则返回null
+    private static AnimatorStateMachine FindDirectParentStateMachine(AnimatorState targetState, AnimatorStateMachine stateMachine)
+    {
+        // 检查当前状态机中的状态
+        foreach (var state in stateMachine.states)
+        {
+            if (state.state == targetState)
+            {
+                // 找到状态，返回当前状态机（直接父状态机）
+                return stateMachine;
+            }
+        }
+        
+        // 递归检查所有子状态机
+        foreach (var childMachine in stateMachine.stateMachines)
+        {
+            // 在子状态机中递归查找
+            AnimatorStateMachine result = FindDirectParentStateMachine(targetState, childMachine.stateMachine);
+            if (result != null)
+            {
+                // 找到了，直接返回结果（直接父状态机）
+                return result;
+            }
+        }
+        
+        // 没有找到
+        return null;
     }
 
     // 处理过渡条件（AnimatorStateTransition重载）
