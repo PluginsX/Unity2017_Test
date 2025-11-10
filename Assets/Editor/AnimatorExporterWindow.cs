@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEditor.Animations;
 using System.IO;
+using System.Collections.Generic;
 
 public class AnimatorExporterWindow : EditorWindow
 {
@@ -9,8 +10,15 @@ public class AnimatorExporterWindow : EditorWindow
     private string exportPath = "";
     private string fileName = "";
     
+    // 状态机筛选相关
+    private List<string> stateMachineNames = new List<string>();
+    private int selectedStateMachineIndex = 0;
+    private bool includeSubStateMachines = false;
+    
     private const string PREFS_KEY_PATH = "AnimatorExporter_LastPath";
     private const string PREFS_KEY_FILENAME = "AnimatorExporter_LastFileName";
+    private const string PREFS_KEY_SELECTED_STATE_MACHINE = "AnimatorExporter_SelectedStateMachine";
+    private const string PREFS_KEY_INCLUDE_SUB_STATE_MACHINES = "AnimatorExporter_IncludeSubStateMachines";
     
     [MenuItem("Window/AnimatorExporter")]
     [MenuItem("Assets/AnimatorExporter", false, 0)]
@@ -26,6 +34,7 @@ public class AnimatorExporterWindow : EditorWindow
     {
         LoadPreferences();
         CheckSelectedAsset();
+        UpdateStateMachineList();
     }
     
     private void OnGUI()
@@ -37,12 +46,19 @@ public class AnimatorExporterWindow : EditorWindow
         
         // 1. 动画控制器资产引用
         EditorGUILayout.LabelField("动画控制器", EditorStyles.boldLabel);
+        AnimatorController previousAnimator = targetAnimator;
         targetAnimator = (AnimatorController)EditorGUILayout.ObjectField(
             "控制器", 
             targetAnimator, 
             typeof(AnimatorController), 
             false
         );
+        
+        // 如果控制器改变，更新状态机列表
+        if (previousAnimator != targetAnimator)
+        {
+            UpdateStateMachineList();
+        }
         
         EditorGUILayout.Space();
         
@@ -108,6 +124,32 @@ public class AnimatorExporterWindow : EditorWindow
         
         EditorGUILayout.Space();
         
+        // 4. 状态机筛选
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("导出状态机筛选", EditorStyles.boldLabel);
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.LabelField("状态机:", GUILayout.Width(80));
+        if (stateMachineNames.Count > 0)
+        {
+            int previousIndex = selectedStateMachineIndex;
+            selectedStateMachineIndex = EditorGUILayout.Popup(selectedStateMachineIndex, stateMachineNames.ToArray());
+            if (previousIndex != selectedStateMachineIndex)
+            {
+                SavePreferences();
+            }
+        }
+        else
+        {
+            EditorGUILayout.LabelField("无可用状态机");
+        }
+        bool previousIncludeSub = includeSubStateMachines;
+        includeSubStateMachines = EditorGUILayout.Toggle("包含子状态机", includeSubStateMachines);
+        if (previousIncludeSub != includeSubStateMachines)
+        {
+            SavePreferences();
+        }
+        EditorGUILayout.EndHorizontal();
+        
         // 5. 选项设置
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("导出选项", EditorStyles.boldLabel);
@@ -145,8 +187,66 @@ public class AnimatorExporterWindow : EditorWindow
                     fileName = targetAnimator.name + ".json";
                     SavePreferences();
                 }
+                UpdateStateMachineList();
                 Repaint();
                 break;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 获取当前引用控制器内的所有子状态机名列表（包括最顶级的状态机，顶级状态机命名为ROOT）
+    /// </summary>
+    private void UpdateStateMachineList()
+    {
+        stateMachineNames.Clear();
+        
+        if (targetAnimator == null)
+        {
+            return;
+        }
+        
+        if (targetAnimator.layers == null || targetAnimator.layers.Length == 0)
+        {
+            return;
+        }
+        
+        // 添加根状态机（命名为ROOT）
+        stateMachineNames.Add("ROOT");
+        
+        // 递归获取所有子状态机
+        CollectSubStateMachines(targetAnimator.layers[0].stateMachine);
+        
+        // 确保选中的索引有效
+        if (selectedStateMachineIndex >= stateMachineNames.Count)
+        {
+            selectedStateMachineIndex = 0;
+        }
+    }
+    
+    /// <summary>
+    /// 递归收集所有子状态机名称
+    /// </summary>
+    private void CollectSubStateMachines(AnimatorStateMachine stateMachine)
+    {
+        if (stateMachine == null)
+        {
+            return;
+        }
+        
+        // 遍历当前状态机的所有子状态机
+        foreach (var childMachine in stateMachine.stateMachines)
+        {
+            if (childMachine.stateMachine != null)
+            {
+                string stateMachineName = childMachine.stateMachine.name;
+                if (!string.IsNullOrEmpty(stateMachineName) && !stateMachineNames.Contains(stateMachineName))
+                {
+                    stateMachineNames.Add(stateMachineName);
+                }
+                
+                // 递归处理子状态机的子状态机
+                CollectSubStateMachines(childMachine.stateMachine);
             }
         }
     }
@@ -270,8 +370,15 @@ public class AnimatorExporterWindow : EditorWindow
                 Directory.CreateDirectory(directory);
             }
             
-            // 执行导出
-            string json = AnimatorExporterCore.ExportToJson(controller);
+            // 获取选中的状态机名称
+            string selectedStateMachineName = "ROOT";
+            if (stateMachineNames.Count > 0 && selectedStateMachineIndex >= 0 && selectedStateMachineIndex < stateMachineNames.Count)
+            {
+                selectedStateMachineName = stateMachineNames[selectedStateMachineIndex];
+            }
+            
+            // 执行导出（使用筛选功能）
+            string json = AnimatorExporterCore.ExportToJson(controller, selectedStateMachineName, includeSubStateMachines);
             string filePath = Path.Combine(directory, fileName);
             File.WriteAllText(filePath, json);
             
@@ -304,12 +411,16 @@ public class AnimatorExporterWindow : EditorWindow
     {
         exportPath = EditorPrefs.GetString(PREFS_KEY_PATH, "");
         fileName = EditorPrefs.GetString(PREFS_KEY_FILENAME, "");
+        selectedStateMachineIndex = EditorPrefs.GetInt(PREFS_KEY_SELECTED_STATE_MACHINE, 0);
+        includeSubStateMachines = EditorPrefs.GetBool(PREFS_KEY_INCLUDE_SUB_STATE_MACHINES, false);
     }
     
     private void SavePreferences()
     {
         EditorPrefs.SetString(PREFS_KEY_PATH, exportPath);
         EditorPrefs.SetString(PREFS_KEY_FILENAME, fileName);
+        EditorPrefs.SetInt(PREFS_KEY_SELECTED_STATE_MACHINE, selectedStateMachineIndex);
+        EditorPrefs.SetBool(PREFS_KEY_INCLUDE_SUB_STATE_MACHINES, includeSubStateMachines);
     }
     
     private void OnSelectionChange()

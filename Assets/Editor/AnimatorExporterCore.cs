@@ -31,15 +31,102 @@ using System.Text;
         StateMachineData data = new StateMachineData();
         
         // 处理根状态机
-        ProcessStateMachine(controller.layers[0].stateMachine, data, "", controller);
+        ProcessStateMachine(controller.layers[0].stateMachine, data, "", controller, true);
         
         // 使用自定义序列化方法，确保Trigger类型不输出Compare和Value字段
         return SerializeToJson(data);
     }
     
+    /// <summary>
+    /// 导出Animator控制器为JSON字符串（支持状态机筛选）
+    /// </summary>
+    /// <param name="controller">动画控制器</param>
+    /// <param name="selectedStateMachineName">选中的状态机名称（"ROOT"表示根状态机）</param>
+    /// <param name="includeSubStateMachines">是否包含子状态机</param>
+    public static string ExportToJson(AnimatorController controller, string selectedStateMachineName, bool includeSubStateMachines)
+    {
+        if (controller == null)
+        {
+            throw new ArgumentNullException("controller", "AnimatorController不能为空");
+        }
+        
+        if (controller.layers == null || controller.layers.Length == 0)
+        {
+            throw new InvalidOperationException("AnimatorController没有Layer");
+        }
+        
+        // 创建导出数据结构
+        StateMachineData data = new StateMachineData();
+        
+        // 查找目标状态机
+        AnimatorStateMachine targetStateMachine = null;
+        bool isRootStateMachine = false;
+        
+        if (selectedStateMachineName == "ROOT")
+        {
+            // 根状态机
+            targetStateMachine = controller.layers[0].stateMachine;
+            isRootStateMachine = true;
+        }
+        else
+        {
+            // 查找子状态机
+            targetStateMachine = FindStateMachineByName(controller.layers[0].stateMachine, selectedStateMachineName);
+            if (targetStateMachine == null)
+            {
+                throw new ArgumentException("未找到名称为 '" + selectedStateMachineName + "' 的状态机", "selectedStateMachineName");
+            }
+        }
+        
+        // 处理目标状态机
+        ProcessStateMachine(targetStateMachine, data, isRootStateMachine ? "" : targetStateMachine.name, controller, includeSubStateMachines);
+        
+        // 使用自定义序列化方法，确保Trigger类型不输出Compare和Value字段
+        return SerializeToJson(data);
+    }
+    
+    /// <summary>
+    /// 根据名称查找状态机
+    /// </summary>
+    private static AnimatorStateMachine FindStateMachineByName(AnimatorStateMachine rootStateMachine, string targetName)
+    {
+        if (rootStateMachine == null)
+        {
+            return null;
+        }
+        
+        // 检查当前状态机
+        if (rootStateMachine.name == targetName)
+        {
+            return rootStateMachine;
+        }
+        
+        // 递归检查子状态机
+        foreach (var childMachine in rootStateMachine.stateMachines)
+        {
+            if (childMachine.stateMachine != null)
+            {
+                if (childMachine.stateMachine.name == targetName)
+                {
+                    return childMachine.stateMachine;
+                }
+                
+                // 递归查找
+                AnimatorStateMachine result = FindStateMachineByName(childMachine.stateMachine, targetName);
+                if (result != null)
+                {
+                    return result;
+                }
+            }
+        }
+        
+        return null;
+    }
+    
     // 处理状态机（包括子状态机）
     // parentPath为空表示是Base Layer的根状态机
-    private static void ProcessStateMachine(AnimatorStateMachine stateMachine, StateMachineData data, string parentPath, AnimatorController controller)
+    // includeSubStateMachines: 是否处理子状态机
+    private static void ProcessStateMachine(AnimatorStateMachine stateMachine, StateMachineData data, string parentPath, AnimatorController controller, bool includeSubStateMachines = true)
     {
         bool isRootStateMachine = string.IsNullOrEmpty(parentPath);
         
@@ -73,11 +160,14 @@ using System.Text;
             AddNodeIfNotExists(data, stateName, null);
         }
 
-        // 处理子状态机
-        foreach (var childMachine in stateMachine.stateMachines)
+        // 处理子状态机（根据includeSubStateMachines参数决定）
+        if (includeSubStateMachines)
         {
-            // 递归处理子状态机，传递子状态机名作为parentPath
-            ProcessStateMachine(childMachine.stateMachine, data, childMachine.stateMachine.name, controller);
+            foreach (var childMachine in stateMachine.stateMachines)
+            {
+                // 递归处理子状态机，传递子状态机名作为parentPath
+                ProcessStateMachine(childMachine.stateMachine, data, childMachine.stateMachine.name, controller, true);
+            }
         }
 
         // 处理过渡
