@@ -20,7 +20,7 @@ public class AnimatorExporterWindow : EditorWindow
     private const string PREFS_KEY_SELECTED_STATE_MACHINE = "AnimatorExporter_SelectedStateMachine";
     private const string PREFS_KEY_INCLUDE_SUB_STATE_MACHINES = "AnimatorExporter_IncludeSubStateMachines";
     
-    [MenuItem("Window/AnimatorExporter")]
+    [MenuItem("Window/Custom/AnimatorExporter", priority = 1)]
     [MenuItem("Assets/AnimatorExporter", false, 0)]
     public static void ShowWindow()
     {
