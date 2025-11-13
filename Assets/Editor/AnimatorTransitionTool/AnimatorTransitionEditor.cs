@@ -54,6 +54,9 @@ namespace AnimatorTransitionTool
             this.subStateMachine = null;
             this.path = path;
             this.isSubStateMachine = false;
+            
+            // 直接使用state.name，这应该已经包含Unity自动添加的后缀数字
+            // 不再使用ToString()方法，因为它会包含额外的类信息
             this.displayName = string.IsNullOrEmpty(path) ? state.name : string.Format("{0}/{1}", path, state.name);
         }
         
@@ -602,25 +605,8 @@ namespace AnimatorTransitionTool
         }
         
         // 首先检查stateTransitionMap，看是否有子状态机映射的Transition
-        if (_cachedStateTransitionMap != null)
-        {
-            foreach (var kvp in _cachedStateTransitionMap)
-            {
-                if (kvp.Value.Contains(transition))
-                {
-                    // 检查这个键是否是子状态机名称（通过检查_allStates）
-                    foreach (var subStateInfo in _allStates)
-                    {
-                        if (subStateInfo.isSubStateMachine && subStateInfo.displayName == kvp.Key)
-                        {
-                            // 这是子状态机映射的Transition，返回子状态机名称
-                            return kvp.Key;
-                        }
-                    }
-                    // 如果不是子状态机，继续查找（可能是普通状态）
-                }
-            }
-        }
+        // 但不再直接返回子状态机名称，而是继续查找实际的状态
+        // 这样可以确保子状态机中的状态名正确显示
         
         // 使用已收集的状态列表查找
         foreach (var stateInfo in _allStates)
@@ -635,59 +621,21 @@ namespace AnimatorTransitionTool
                         // 获取源状态所在的状态机
                         AnimatorStateMachine sourceStateMachine = GetStateMachineForState(stateInfo.state);
                         
-                        // 检查这个Transition的目标是否在子状态机外
-                        // 如果是，那么源应该显示为子状态机名称
-                        bool shouldUseSubStateMachineName = false;
-                        
-                        if (transition.destinationState != null)
-                        {
-                            // 检查目标状态是否在当前状态机外（即目标状态不在源状态所在的子状态机内）
-                            AnimatorStateMachine destStateMachine = GetStateMachineForState(transition.destinationState);
-                            
-                            if (sourceStateMachine != null && destStateMachine != null && sourceStateMachine != destStateMachine)
-                            {
-                                // 源状态和目标状态在不同的状态机中
-                                // 检查源状态是否在某个子状态机中（不是根状态机）
-                                if (sourceStateMachine != _stateMachine)
-                                {
-                                    shouldUseSubStateMachineName = true;
-                                }
-                            }
-                        }
-                        else if (transition.destinationStateMachine != null)
-                        {
-                            // 目标是子状态机节点，如果源状态在子状态机中，应该显示为子状态机名称
-                            if (sourceStateMachine != null && sourceStateMachine != _stateMachine)
-                            {
-                                shouldUseSubStateMachineName = true;
-                            }
-                        }
-                        else if (transition.isExit)
-                        {
-                            // 目标是Exit，检查源状态是否在子状态机中
-                            if (sourceStateMachine != null && sourceStateMachine != _stateMachine)
-                            {
-                                shouldUseSubStateMachineName = true;
-                            }
-                        }
-                        
-                        // 如果需要使用子状态机名称，查找对应的子状态机信息
-                        if (shouldUseSubStateMachineName && sourceStateMachine != null)
-                        {
-                            foreach (var subStateInfo in _allStates)
-                            {
-                                if (subStateInfo.isSubStateMachine && subStateInfo.subStateMachine == sourceStateMachine)
-                                {
-                                    // 返回子状态机名称
-                                    return subStateInfo.displayName;
-                                }
-                            }
-                        }
+                        // 修复：总是显示实际的状态名称，而不是子状态机名称
+                        // 这样可以确保子状态机中的状态名正确显示
                         
                         return stateInfo.displayName;
                     }
                 }
             }
+        }
+        
+        // 尝试直接获取源状态名称（如果可能）
+        AnimatorState sourceState = GetSourceState(transition);
+        if (sourceState != null)
+        {
+            // 直接使用sourceState.name，避免ToString()带来的额外类信息
+            return sourceState.name;
         }
         
         return "Unknown";
@@ -772,7 +720,7 @@ namespace AnimatorTransitionTool
                     return stateInfo.displayName;
                 }
             }
-            // 如果没找到，返回状态名称
+            // 直接使用destinationState.name，避免ToString()带来的额外类信息
             return transition.destinationState.name;
         }
         else if (transition.destinationStateMachine != null)
@@ -1212,6 +1160,23 @@ namespace AnimatorTransitionTool
             return;
         }
         
+        // 计算所有过渡的源状态和目标状态名称的最大宽度
+        float maxSourceStateWidth = 0f;
+        float maxDestStateWidth = 0f;
+        float maxAllowedWidth = 500f; // 设置一个合理的最大宽度限制，避免UI过度拉伸
+        
+        foreach (var transitionData in filteredTransitions)
+        {
+            float sourceWidth = EditorStyles.boldLabel.CalcSize(new GUIContent(transitionData.sourceStateName)).x;
+            float destWidth = EditorStyles.boldLabel.CalcSize(new GUIContent(transitionData.destinationStateName)).x;
+            maxSourceStateWidth = Mathf.Max(maxSourceStateWidth, sourceWidth);
+            maxDestStateWidth = Mathf.Max(maxDestStateWidth, destWidth);
+        }
+        
+        // 应用最大宽度限制，但确保最小宽度以避免过窄
+        maxSourceStateWidth = Mathf.Clamp(maxSourceStateWidth, 100f, maxAllowedWidth);
+        maxDestStateWidth = Mathf.Clamp(maxDestStateWidth, 100f, maxAllowedWidth);
+        
         // 使用ExpandHeight让ScrollView占据剩余空间
         _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition, GUILayout.ExpandHeight(true));
         
@@ -1240,11 +1205,8 @@ namespace AnimatorTransitionTool
                 GUI.color = Color.cyan;
             }
             
-            // 起始状态名靠左，使用固定宽度避免占用太多空间
-            float sourceStateWidth = EditorStyles.boldLabel.CalcSize(new GUIContent(transitionData.sourceStateName)).x;
-            float maxSourceWidth = 200f; // 限制最大宽度
-            sourceStateWidth = Mathf.Min(sourceStateWidth, maxSourceWidth);
-            EditorGUILayout.LabelField(transitionData.sourceStateName, EditorStyles.boldLabel, GUILayout.Width(sourceStateWidth), GUILayout.ExpandWidth(false));
+            // 起始状态名靠左，使用计算出的最大宽度确保所有名称都能完整显示
+            EditorGUILayout.LabelField(transitionData.sourceStateName, EditorStyles.boldLabel, GUILayout.Width(maxSourceStateWidth), GUILayout.ExpandWidth(false));
             
             // 弹性空间，让箭头居中
             GUILayout.FlexibleSpace();
@@ -1257,11 +1219,8 @@ namespace AnimatorTransitionTool
             // 弹性空间，让终止状态靠右
             GUILayout.FlexibleSpace();
             
-            // 终止状态名靠右，使用固定宽度避免占用太多空间
-            float destStateWidth = EditorStyles.boldLabel.CalcSize(new GUIContent(transitionData.destinationStateName)).x;
-            float maxDestWidth = 200f; // 限制最大宽度
-            destStateWidth = Mathf.Min(destStateWidth, maxDestWidth);
-            EditorGUILayout.LabelField(transitionData.destinationStateName, EditorStyles.boldLabel, GUILayout.Width(destStateWidth), GUILayout.ExpandWidth(false));
+            // 终止状态名靠右，使用计算出的最大宽度确保所有名称都能完整显示
+            EditorGUILayout.LabelField(transitionData.destinationStateName, EditorStyles.boldLabel, GUILayout.Width(maxDestStateWidth), GUILayout.ExpandWidth(false));
             
             GUI.color = Color.white;
             
