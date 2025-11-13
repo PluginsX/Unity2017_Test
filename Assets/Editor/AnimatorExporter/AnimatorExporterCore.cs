@@ -193,7 +193,6 @@ using System.Text;
     {
         // 处理Entry节点的过渡
         // 首先处理Entry到默认状态的过渡（如果存在defaultState）
-        bool hasDefaultStateTransition = false;
         if (stateMachine.defaultState != null)
         {
             TransitionData entryTransition = new TransitionData();
@@ -209,7 +208,6 @@ using System.Text;
             if (!data.Transitions.Exists(t => t.Name == entryTransition.Name))
             {
                 data.Transitions.Add(entryTransition);
-                hasDefaultStateTransition = true;
             }
         }
         
